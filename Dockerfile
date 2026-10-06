@@ -33,3 +33,24 @@ jobs:
       - name: Build Docker image
         run: |
           docker build -t devops-pipeline .
+
+      - name: Run Docker container
+        run: |
+          docker run -d \
+            --name devops-app-test \
+            -p 5000:5000 \
+            devops-pipeline
+
+      - name: Wait for application
+        run: |
+          sleep 5
+
+      - name: Test application health
+        run: |
+          curl --fail http://localhost:5000/health
+
+      - name: Stop Docker container
+        if: always()
+        run: |
+          docker stop devops-app-test
+          docker rm devops-app-test
