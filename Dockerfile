@@ -1,16 +1,35 @@
-FROM python:3.12-slim
+name: CI
 
-WORKDIR /app
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
 
-COPY app/requirements.txt .
+jobs:
+  test:
 
-RUN pip install --no-cache-dir -r requirements.txt
+    runs-on: ubuntu-latest
 
-COPY app/ .
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-EXPOSE 5000
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"
-    
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:app"]
+      - name: Install dependencies
+        run: |
+          pip install -r app/requirements.txt
+
+      - name: Run tests
+        run: |
+          pytest
+
+      - name: Build Docker image
+        run: |
+          docker build -t devops-pipeline .
