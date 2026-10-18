@@ -1,8 +1,12 @@
 # Render Blueprint — staging deployment for devops-pipeline
+# ==========================================================
+# NOTE: UNUSED — kept as a documented alternative. Render's signup demanded
+# a credit card for identity verification (Oct 2026), so staging runs on
+# Railway instead (see README → Staging Deployment).
 # ----------------------------------------------------------
-# Free plan: NO payment method is required or added, so Render
-# cannot bill this workspace. Exceeding free limits suspends the
-# service instead of charging (see README → Staging Deployment).
+# The blueprint below would deploy on Render's free plan (750
+# instance-hours/month, no card on file = suspension instead of charges)
+# IF the account could be created without a card. It could not.
 #
 # Setup: Render Dashboard → New → Blueprint → connect this repo.
 # Render detects the Dockerfile (EXPOSE 5000) for the listen port.

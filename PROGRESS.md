@@ -231,6 +231,10 @@ First real CI run (`39103434197`) failed at **Verify health endpoint**:
 
 ## Phase 5 decision: hosting research → Render (free, no card)
 
+> **Superseded:** Render's signup demanded a credit card for identity
+> verification — abandoned under the no-card constraint. See "Phase 5 final"
+> below for the Railway deployment that actually shipped.
+
 ### What changed
 * Research pass comparing all currently free container hosts (Oct 2026):
   excluded Koyeb ($29 card hold since Feb 2026), Fly.io (no free tier since
@@ -264,6 +268,53 @@ First real CI run (`39103434197`) failed at **Verify health endpoint**:
 
 ---
 
+## Phase 5 final: Render blocked by card wall → Railway (LIVE, verified)
+
+### What happened
+* Render signup demanded a **credit card "to verify identity"** → cancelled,
+  no card added. Re-ran the free-hosting screen (Oct 2026):
+  * Hugging Face Docker Spaces — **paid since July 2026** (research caught
+    this before we committed to it)
+  * Northflank — card required to create any resource
+  * Back4App free container — stops after 60 minutes per deploy (dead demo)
+  * Koyeb ($29 card hold), Fly.io, Heroku, Oracle/AWS/GCP/Azure — card or no
+    free tier
+  * Zeabur — free-plan docs conflict on container support (uncertain)
+* Selected **Railway**: card-free signup, one-time **$5 / 30-day trial
+  credit** (enough for this app's ~$2–3/month footprint), deploys the same
+  `Dockerfile` straight from GitHub.
+
+### What changed
+* `README.md` — staging section rewritten for Railway (trial terms,
+  pause-not-charge behavior after the trial, verified URL, monitoring
+  limitation kept, Render/SSH paths documented as unused alternatives);
+  header + architecture diagram + submission links updated with the real
+  URL.
+* `PROGRESS.md` — this entry; Render entry marked superseded.
+* Service config (Railway dashboard): `APP_ENV=staging` (verified live).
+
+### Verified (2026-10-18, all HTTP 200)
+* `https://devops-pipeline-production.up.railway.app/health` → `{"status":"ok"}`
+* `https://devops-pipeline-production.up.railway.app/` → `"env":"staging"`
+  (after setting `APP_ENV=staging`; first check showed `"env":"dev"` —
+  proof the fallback worked and the variable really landed)
+* `https://devops-pipeline-production.up.railway.app/metrics` → Prometheus
+  exposition format
+
+### What you should understand
+* **Charge-proof still holds:** no payment method → when the $5 trial credit
+  ends the service **pauses**; Railway cannot bill an account with no card.
+* **First `/` check said `dev`** — good catch pattern: never assume an env
+  var landed; verify it through the app's own response.
+* **Monitoring limitation unchanged:** the Prometheus stack stays local
+  (second container wouldn't fit any $0 budget); `/metrics` is exposed on
+  staging so a local Prometheus *can* scrape it if needed.
+* **Render research lesson:** free-tier terms move fast (HF Docker Spaces
+  went paid mid-2026; Render added a card wall) — re-verify before trusting
+  any list, including this one.
+
+---
+
 ## Current status summary
 
 | Item | Status |
@@ -277,6 +328,6 @@ First real CI run (`39103434197`) failed at **Verify health endpoint**:
 | Pytest suite | ✅ 4 tests passing locally |
 | CI workflow (test → docker → publish) | ✅ Green on GitHub (run `39103889795`); includes the health-check race fix |
 | GHCR publishing | ✅ Published & verified (`ghcr.io/hager-83/devops-pipeline:latest` pulls anonymously) |
-| Staging deployment | ⚠️ Render Blueprint (`render.yaml`) ready; **pending your one-time Render account setup** |
-| README | ✅ Matches implementation |
-| Live URL | ❌ Not claimed — created and verified after the Render setup |
+| Staging deployment | ✅ **LIVE on Railway** (`APP_ENV=staging`), $0, no card — Render abandoned (card wall) |
+| README | ✅ Matches implementation, real URL documented |
+| Live URL | ✅ https://devops-pipeline-production.up.railway.app — verified 2026-10-18 (`/health` 200, `/` = staging, `/metrics` OK) |

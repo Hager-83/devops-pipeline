@@ -1,10 +1,9 @@
 # DevOps Pipeline
 
-A containerized Flask web application with Docker, Docker Compose, automated testing, a GitHub Actions CI/CD pipeline, GitHub Container Registry publishing, Prometheus monitoring, and a prepared (but not yet enabled) staging deployment.
+A containerized Flask web application with Docker, Docker Compose, automated testing, a GitHub Actions CI/CD pipeline, GitHub Container Registry publishing, Prometheus monitoring, and a live staging deployment on Railway.
 
 > **Repository:** https://github.com/Hager-83/devops-pipeline
-> **Live / staging URL:** not deployed yet — provisioned free of charge on Render
-> (no credit card) via `render.yaml`; see [Staging Deployment](#staging-deployment).
+> **Staging URL:** https://devops-pipeline-production.up.railway.app (verified live — see [Staging Deployment](#staging-deployment)).
 
 ## Architecture
 
@@ -23,7 +22,7 @@ A containerized Flask web application with Docker, Docker Compose, automated tes
 
   GitHub Actions:  pytest  →  docker build + health check  →  push to GHCR
                    └────────── gated alternative: SSH deploy ──→  staging VM
-  Render (staging): blueprint auto-deploys main after CI checks pass
+  Railway (staging): auto-deploys this repo's Dockerfile on push to main
 ```
 
 ![Project Architecture](image.png)
@@ -48,7 +47,7 @@ devops-pipeline/
 ├── docker-compose.yml              # Local stack: app + Prometheus
 ├── docker-compose.staging.yml      # Staging stack (prebuilt GHCR image)
 ├── pytest.ini
-├── render.yaml                     # Render Blueprint (free staging hosting)
+├── render.yaml                     # Render Blueprint (unused alternative; see Staging Deployment)
 ├── report.md                       # Initial project assessment
 ├── PROGRESS.md                     # Phase-by-phase development log
 ├── image.png
@@ -180,7 +179,7 @@ Workflow: `.github/workflows/ci-cd.yml`, triggered on every push/PR to `main`.
 | `test`            | Installs dependencies, runs `pytest -v` | Every push / PR |
 | `docker`          | Builds the image, starts a container, curls `/health`, `/metrics`, and `/`, prints logs, removes the container (`if: always()` so cleanup happens even on failure) | After `test` passes |
 | `publish`         | Logs into GHCR with the built-in `GITHUB_TOKEN` (permission `packages: write` only), builds and pushes `:latest` and `:sha-<commit>` tags | Pushes to `main` only |
-| `deploy-staging`  | **Alternative (VPS) path:** SSHs to a server, pulls the image, starts the `docker-compose.staging.yml` stack, then curls `/health` | **Gated off** until `DEPLOY_STAGING` variable is set — the primary staging path is Render (below) |
+| `deploy-staging`  | **Alternative (VPS) path:** SSHs to a server, pulls the image, starts the `docker-compose.staging.yml` stack, then curls `/health` | **Gated off** until `DEPLOY_STAGING` variable is set — the active staging path is Railway (below) |
 
 A failure in any required job fails the workflow, which blocks the jobs that depend on it (`needs:` chain: test → docker → publish → deploy-staging).
 
@@ -199,66 +198,56 @@ Public packages need no login; if the package is private, log in first:
 
 ## Staging Deployment
 
-**Status: fully configured, waiting for the one-time Render account setup
-(nothing deployed until that happens — no URL is claimed here).**
+**Status: LIVE — https://devops-pipeline-production.up.railway.app**
+(Verified 2026-10-18: `/health` → `{"status":"ok"}`, `/` → `"env":"staging"`,
+`/metrics` → Prometheus exposition format, all HTTP 200.)
 
-### Primary path: Render (free, $0, no credit card)
+### Hosting: Railway (free trial tier, $0, no credit card)
 
-Chosen because it is one of the few container platforms that still runs
-Docker **without asking for a payment method**. With no card on the account,
-Render *cannot* bill you — exceeding free limits suspends services instead
-of charging them.
+Render was the original plan but its signup demanded a credit card "for
+identity verification" — abandoned rather than add a card. Railway was
+selected instead because it deploys from GitHub **without any payment
+method**.
 
-Free-plan facts (verified October 2026):
+Free-tier facts (verified October 2026):
 
 | Aspect | Behavior |
 | ------ | -------- |
-| Cost | $0 — signup via GitHub, **no payment page** |
-| Limits | 750 instance-hours/month (enough for one always-on app), 512 MB RAM, 5 GB bandwidth |
-| Sleep | Spins down after **15 min without traffic**; first request takes ~30–60 s to wake it |
-| Resets | Hours/bandwidth reset each calendar month; exhaustion = suspension, never a charge |
-| Endpoint | Your URL: `https://<service-name>.onrender.com` (shown in the Render dashboard after creation) |
+| Cost | **$0** — sign up with GitHub, **no card required** |
+| Trial | One-time **$5 usage credit, valid 30 days** — enough to run this app continuously through the demo window (~$2–3/month at this app's footprint) |
+| After the trial | Drops to the Free plan ($1/month credit). When credit is exhausted the service **pauses** — with no card on file, Railway **cannot bill you**: worst case is downtime, never a charge |
+| Deploys | Railway watches this repo and rebuilds the existing `Dockerfile` (port 5000, Gunicorn) on push to `main` |
+| Endpoint | `https://devops-pipeline-production.up.railway.app` (HTTPS) |
 
-How it works with this repo: `render.yaml` (Render Blueprint) defines the
-service — it builds the repo's own `Dockerfile`, listens on the port from
-`EXPOSE 5000`, health-checks `/health`, sets `APP_ENV=staging`, and only
-auto-deploys after the repository's **CI checks pass** on `main`.
-
-One-time setup (dashboard, ~3 minutes):
-
-1. Go to https://dashboard.render.com → sign up with GitHub (**skip/decline
-   any payment step**)
-2. **New → Blueprint** → connect `Hager-83/devops-pipeline` → Render reads
-   `render.yaml`
-3. Click **Apply** → wait for the first build
-4. Open the service → copy the URL from **Settings → Ports/URL**
-
-Verification after setup:
-
-```bash
-curl <your-staging-url>/health   # {"status":"ok"}  (allow ~60 s cold start)
-curl <your-staging-url>/         # should contain "staging"
-curl <your-staging-url>/metrics  # Prometheus exposition format
-```
+How staging is configured: Railway builds the same `Dockerfile` the CI
+tests and the local compose stack use; the service variable
+`APP_ENV=staging` puts the app in staging mode (verified live in the `/`
+response). The GitHub Actions pipeline (test → docker verify → GHCR
+publish) runs independently and unchanged.
 
 ### Monitoring on staging — documented limitation
 
 The Prometheus **container stack runs and is verified locally only**
-(`docker compose up` → target `app` is UP at localhost:9090). Render's free
-tier cannot host a second always-on Prometheus container (it would sleep
-too, breaking scraping), so the staging URL exposes the app's `/metrics`
-data directly instead of a Prometheus dashboard. The CI workflow, health
-checks, and metrics endpoint all remain identical between local and staging.
+(`docker compose up` → target `app` is UP at localhost:9090). A second
+always-on Prometheus container does not fit a $0/no-card budget on any
+current host (Railway's trial credit would be consumed by two services,
+and free tiers that sleep would break scraping), so the staging URL
+exposes the app's `/metrics` data directly instead of a Prometheus
+dashboard. The CI workflow, health checks, and metrics endpoint all
+remain identical between local and staging.
 
-### Alternative path: SSH deployment to a self-managed server
+### Other deployment paths (documented, unused)
 
-The `deploy-staging` job in `.github/workflows/ci-cd.yml` is a complete
-SSH-based CD job (needs: `publish`, deploys `docker-compose.staging.yml`,
-verifies `/health` afterwards). It stays **gated off** because no VPS
-exists. To enable it later: provision any server with Docker, then set the
-repository secrets/variables listed in that workflow's header comment
-(`STAGING_HOST`, `STAGING_USER`, `STAGING_SSH_KEY`, `STAGING_URL`,
-`DEPLOY_STAGING=true`).
+* **`render.yaml`** — Render Blueprint kept for reference (renders the same
+  Dockerfile, free plan, `/health` check). Unused because Render's signup
+  required a card in this case.
+* **`deploy-staging` job** in `.github/workflows/ci-cd.yml` — a complete
+  SSH-based CD job (needs: `publish`, deploys
+  `docker-compose.staging.yml`, verifies `/health` afterwards). Stays
+  **gated off** because no VPS exists. To enable it later: provision any
+  server with Docker, then set the repository secrets/variables listed in
+  that workflow's header comment (`STAGING_HOST`, `STAGING_USER`,
+  `STAGING_SSH_KEY`, `STAGING_URL`, `DEPLOY_STAGING=true`).
 
 ## Troubleshooting
 
@@ -273,6 +262,6 @@ curl http://localhost:5000/metrics
 ## Submission Links
 
 * **GitHub repository:** https://github.com/Hager-83/devops-pipeline
-* **Live / staging URL:** `https://<service-name>.onrender.com` — paste the
-  real URL here immediately after the Render setup above; until then this
-  project intentionally claims no live URL
+* **Staging URL:** https://devops-pipeline-production.up.railway.app
+  (verified 2026-10-18: `/health` 200, `/` reports `env=staging`, `/metrics`
+  serves Prometheus metrics)
