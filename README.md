@@ -48,7 +48,6 @@ devops-pipeline/
 ├── docker-compose.staging.yml      # Staging stack (prebuilt GHCR image)
 ├── pytest.ini
 ├── render.yaml                     # Render Blueprint (unused alternative; see Staging Deployment)
-├── report.md                       # Initial project assessment
 ├── PROGRESS.md                     # Phase-by-phase development log
 ├── image.png
 └── README.md
@@ -224,6 +223,32 @@ tests and the local compose stack use; the service variable
 `APP_ENV=staging` puts the app in staging mode (verified live in the `/`
 response). The GitHub Actions pipeline (test → docker verify → GHCR
 publish) runs independently and unchanged.
+
+### Deployment instructions
+
+**Redeploying an update (the normal flow):**
+
+```bash
+git push origin main
+```
+
+That's it — CI runs on GitHub, and Railway independently rebuilds and
+redeploys the service from the same push (automatic deployment to staging).
+
+**Recreating the staging deployment from scratch:**
+
+1. Sign up at https://railway.com with GitHub (no payment method needed)
+2. **New Project → Deploy from GitHub repo** → authorize Railway → select
+   `Hager-83/devops-pipeline` (Railway builds the repo's `Dockerfile`, which
+   listens on port 5000)
+3. Service → **Variables** → add `APP_ENV=staging`
+4. Service → **Settings → Networking → Generate Domain** to get the public
+   HTTPS URL
+5. Verify: `curl <url>/health` → `{"status":"ok"}` and `curl <url>/` →
+   `"env":"staging"`
+
+**Alternatives:** the SSH/VPS `deploy-staging` job (gated off, see below) or
+the `render.yaml` Blueprint. Either can host the same image.
 
 ### Monitoring on staging — documented limitation
 

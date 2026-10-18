@@ -7,7 +7,8 @@ tested, and what to understand from each phase.
 
 ## Pre-phase: Assessment (read-only)
 
-* Full inspection written to `report.md`.
+* Full inspection written to `report.md` (assessment snapshot; removed from
+  the repository later at the author's request).
 * **Key discovery:** `Dockerfile` had been accidentally overwritten with
   GitHub Actions YAML (commit `e16b4dd`); the real Dockerfile survived in the
   initial commit `ae4c3e3`. CI was green only because it never used Docker.

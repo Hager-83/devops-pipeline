@@ -9,7 +9,6 @@ env
 .env
 .env.example
 *.md
-report.md
 image.png
 docker-compose*.yml
 Dockerfile
