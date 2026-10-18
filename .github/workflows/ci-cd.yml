@@ -9,8 +9,10 @@ on:
       - main
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1: run the pytest suite
+  # ---------------------------------------------------------------------------
   test:
-
     runs-on: ubuntu-latest
 
     steps:
@@ -23,9 +25,154 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: |
-          pip install -r app/requirements.txt
+        run: pip install -r app/requirements.txt
 
       - name: Run tests
+        run: pytest -v
+
+  # ---------------------------------------------------------------------------
+  # Job 2: build the Docker image, boot it, and prove it is healthy
+  # Any failure in this job fails the workflow; cleanup always runs.
+  # ---------------------------------------------------------------------------
+  docker:
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t devops-pipeline:ci .
+
+      - name: Run container
         run: |
-          pytest
+          docker run -d \
+            --name devops-app-test \
+            -p 5000:5000 \
+            -e APP_ENV=ci \
+            devops-pipeline:ci
+
+      - name: Verify health endpoint
+        run: |
+          curl --fail --silent --show-error \
+            --retry 5 --retry-delay 2 --retry-connrefused \
+            http://localhost:5000/health
+
+      - name: Verify metrics endpoint
+        run: |
+          curl --fail --silent --show-error \
+            http://localhost:5000/metrics | head -5
+
+      - name: Verify application endpoint
+        run: |
+          curl --fail --silent --show-error \
+            http://localhost:5000/ | grep "Hello from devops-pipeline"
+
+      - name: Show container logs
+        if: always()
+        run: docker logs devops-app-test
+
+      - name: Cleanup container
+        if: always()
+        run: docker rm -f devops-app-test || true
+
+  # ---------------------------------------------------------------------------
+  # Job 3: publish the image to GitHub Container Registry (GHCR)
+  # Runs only after tests + docker health checks pass, and only on pushes
+  # to main (not on pull requests).
+  # GITHUB_TOKEN is provided automatically by GitHub; packages:write is the
+  # minimum permission this job needs. No credentials are stored in the repo.
+  # ---------------------------------------------------------------------------
+  publish:
+    needs: docker
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and tag image
+        run: |
+          docker build \
+            -t ghcr.io/hager-83/devops-pipeline:latest \
+            -t ghcr.io/hager-83/devops-pipeline:sha-${{ github.sha }} \
+            .
+
+      - name: Push image to GHCR
+        run: |
+          docker push ghcr.io/hager-83/devops-pipeline:latest
+          docker push ghcr.io/hager-83/devops-pipeline:sha-${{ github.sha }}
+
+  # ---------------------------------------------------------------------------
+  # Job 4: deploy to a staging server over SSH, then verify health.
+  #
+  # GATED: this job is skipped until you create the repository variable
+  #   DEPLOY_STAGING = "true"
+  # and configure these GitHub Actions secrets/variables (Settings > Secrets
+  # and variables > Actions):
+  #   Secrets : STAGING_HOST, STAGING_USER, STAGING_SSH_KEY,
+  #             GHCR_PULL_TOKEN (only if the GHCR package is private)
+  #   Variables: STAGING_URL  (e.g. http://staging.example.com)
+  #
+  # Nothing is invented: the job runs only with real credentials, and the
+  # post-deploy health check must pass or the job fails.
+  # ---------------------------------------------------------------------------
+  deploy-staging:
+    needs: publish
+    if: vars.DEPLOY_STAGING == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure SSH
+        env:
+          STAGING_SSH_KEY: ${{ secrets.STAGING_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          # %b expands \n escape sequences in case the key was stored on one line
+          printf '%b\n' "$STAGING_SSH_KEY" > ~/.ssh/staging_key
+          chmod 600 ~/.ssh/staging_key
+          printf 'Host staging\n  HostName %s\n  User %s\n  IdentityFile ~/.ssh/staging_key\n  StrictHostKeyChecking accept-new\n' \
+            "${{ secrets.STAGING_HOST }}" "${{ secrets.STAGING_USER }}" > ~/.ssh/config
+
+      - name: Copy compose files to staging server
+        run: |
+          ssh staging 'mkdir -p ~/devops-pipeline/monitoring'
+          scp docker-compose.staging.yml staging:~/devops-pipeline/
+          scp monitoring/prometheus.yml staging:~/devops-pipeline/monitoring/
+
+      - name: Pull image and start staging stack
+        env:
+          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+        run: |
+          # Log in on the remote host only if a pull token is provided
+          if [ -n "$GHCR_PULL_TOKEN" ]; then
+            ssh staging "printf '%s' '$GHCR_PULL_TOKEN' | docker login ghcr.io -u ${{ github.actor }} --password-stdin"
+          fi
+          ssh staging 'cd ~/devops-pipeline && \
+            docker compose -f docker-compose.staging.yml pull && \
+            docker compose -f docker-compose.staging.yml up -d'
+
+      - name: Verify staging health after deploy
+        env:
+          STAGING_URL: ${{ vars.STAGING_URL }}
+        run: |
+          curl --fail --silent --show-error \
+            --retry 5 --retry-delay 5 --retry-connrefused \
+            "$STAGING_URL/health"
+          echo
+          curl --fail --silent --show-error "$STAGING_URL/" | grep "staging"

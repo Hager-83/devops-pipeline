@@ -1,0 +1,18 @@
+# Keep the Docker build context small and avoid copying irrelevant/secret files
+.git
+.github
+.venv
+venv
+env
+**/__pycache__
+.pytest_cache
+.env
+.env.example
+*.md
+report.md
+image.png
+docker-compose*.yml
+Dockerfile
+.dockerignore
+tests
+monitoring

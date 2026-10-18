@@ -1,56 +1,16 @@
-name: CI
+FROM python:3.12-slim
 
-on:
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
+WORKDIR /app
 
-jobs:
-  test:
+COPY app/requirements.txt .
 
-    runs-on: ubuntu-latest
+RUN pip install --no-cache-dir -r requirements.txt
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+COPY app/ .
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+EXPOSE 5000
 
-      - name: Install dependencies
-        run: |
-          pip install -r app/requirements.txt
-
-      - name: Run tests
-        run: |
-          pytest
-
-      - name: Build Docker image
-        run: |
-          docker build -t devops-pipeline .
-
-      - name: Run Docker container
-        run: |
-          docker run -d \
-            --name devops-app-test \
-            -p 5000:5000 \
-            devops-pipeline
-
-      - name: Wait for application
-        run: |
-          sleep 5
-
-      - name: Test application health
-        run: |
-          curl --fail http://localhost:5000/health
-
-      - name: Stop Docker container
-        if: always()
-        run: |
-          docker stop devops-app-test
-          docker rm devops-app-test
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"
+    
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:app"]
