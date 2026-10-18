@@ -3,7 +3,8 @@
 A containerized Flask web application with Docker, Docker Compose, automated testing, a GitHub Actions CI/CD pipeline, GitHub Container Registry publishing, Prometheus monitoring, and a prepared (but not yet enabled) staging deployment.
 
 > **Repository:** https://github.com/Hager-83/devops-pipeline
-> **Live / staging URL:** *not yet deployed* — the staging deployment workflow is implemented but gated off until a staging server is configured (see [Staging Deployment](#staging-deployment)).
+> **Live / staging URL:** not deployed yet — provisioned free of charge on Render
+> (no credit card) via `render.yaml`; see [Staging Deployment](#staging-deployment).
 
 ## Architecture
 
@@ -21,7 +22,8 @@ A containerized Flask web application with Docker, Docker Compose, automated tes
                     Docker Network
 
   GitHub Actions:  pytest  →  docker build + health check  →  push to GHCR
-                   └────────── gated off until configured ──→  deploy staging
+                   └────────── gated alternative: SSH deploy ──→  staging VM
+  Render (staging): blueprint auto-deploys main after CI checks pass
 ```
 
 ![Project Architecture](image.png)
@@ -46,6 +48,7 @@ devops-pipeline/
 ├── docker-compose.yml              # Local stack: app + Prometheus
 ├── docker-compose.staging.yml      # Staging stack (prebuilt GHCR image)
 ├── pytest.ini
+├── render.yaml                     # Render Blueprint (free staging hosting)
 ├── report.md                       # Initial project assessment
 ├── PROGRESS.md                     # Phase-by-phase development log
 ├── image.png
@@ -177,7 +180,7 @@ Workflow: `.github/workflows/ci-cd.yml`, triggered on every push/PR to `main`.
 | `test`            | Installs dependencies, runs `pytest -v` | Every push / PR |
 | `docker`          | Builds the image, starts a container, curls `/health`, `/metrics`, and `/`, prints logs, removes the container (`if: always()` so cleanup happens even on failure) | After `test` passes |
 | `publish`         | Logs into GHCR with the built-in `GITHUB_TOKEN` (permission `packages: write` only), builds and pushes `:latest` and `:sha-<commit>` tags | Pushes to `main` only |
-| `deploy-staging`  | SSHs to the staging server, copies the staging compose files, pulls the new image, starts the stack, then curls the staging `/health` | **Gated off** until `DEPLOY_STAGING` variable is set (see below) |
+| `deploy-staging`  | **Alternative (VPS) path:** SSHs to a server, pulls the image, starts the `docker-compose.staging.yml` stack, then curls `/health` | **Gated off** until `DEPLOY_STAGING` variable is set — the primary staging path is Render (below) |
 
 A failure in any required job fails the workflow, which blocks the jobs that depend on it (`needs:` chain: test → docker → publish → deploy-staging).
 
@@ -196,31 +199,66 @@ Public packages need no login; if the package is private, log in first:
 
 ## Staging Deployment
 
-**Status: implemented in the workflow, not yet activated.** Nothing has been
-deployed and no live URL exists yet.
+**Status: fully configured, waiting for the one-time Render account setup
+(nothing deployed until that happens — no URL is claimed here).**
 
-The pieces that already exist:
+### Primary path: Render (free, $0, no credit card)
 
-* `docker-compose.staging.yml` — runs the prebuilt image
-  `ghcr.io/hager-83/devops-pipeline:latest` with `APP_ENV=staging`,
-  `restart: unless-stopped`, and the same health check
-* The `deploy-staging` job in the workflow — SSH deploy + post-deploy health
-  verification (a failed health check fails the job)
+Chosen because it is one of the few container platforms that still runs
+Docker **without asking for a payment method**. With no card on the account,
+Render *cannot* bill you — exceeding free limits suspends services instead
+of charging them.
 
-To activate it you need a staging server and must configure
-**Settings → Secrets and variables → Actions** on the repository:
+Free-plan facts (verified October 2026):
 
-| Type     | Name              | Value                                   |
-| -------- | ----------------- | --------------------------------------- |
-| Secret   | `STAGING_HOST`    | Server IP or hostname                    |
-| Secret   | `STAGING_USER`    | SSH username                             |
-| Secret   | `STAGING_SSH_KEY` | Private key (the matching public key must be in the server's `authorized_keys`) |
-| Secret   | `GHCR_PULL_TOKEN` | Optional — only if the GHCR package is private |
-| Variable | `STAGING_URL`     | e.g. `http://staging.example.com`        |
-| Variable | `DEPLOY_STAGING`  | `true` (enables the deploy job)          |
+| Aspect | Behavior |
+| ------ | -------- |
+| Cost | $0 — signup via GitHub, **no payment page** |
+| Limits | 750 instance-hours/month (enough for one always-on app), 512 MB RAM, 5 GB bandwidth |
+| Sleep | Spins down after **15 min without traffic**; first request takes ~30–60 s to wake it |
+| Resets | Hours/bandwidth reset each calendar month; exhaustion = suspension, never a charge |
+| Endpoint | Your URL: `https://<service-name>.onrender.com` (shown in the Render dashboard after creation) |
 
-The server needs Docker + Docker Compose installed; the workflow deploys to
-`~/devops-pipeline/` on the server.
+How it works with this repo: `render.yaml` (Render Blueprint) defines the
+service — it builds the repo's own `Dockerfile`, listens on the port from
+`EXPOSE 5000`, health-checks `/health`, sets `APP_ENV=staging`, and only
+auto-deploys after the repository's **CI checks pass** on `main`.
+
+One-time setup (dashboard, ~3 minutes):
+
+1. Go to https://dashboard.render.com → sign up with GitHub (**skip/decline
+   any payment step**)
+2. **New → Blueprint** → connect `Hager-83/devops-pipeline` → Render reads
+   `render.yaml`
+3. Click **Apply** → wait for the first build
+4. Open the service → copy the URL from **Settings → Ports/URL**
+
+Verification after setup:
+
+```bash
+curl <your-staging-url>/health   # {"status":"ok"}  (allow ~60 s cold start)
+curl <your-staging-url>/         # should contain "staging"
+curl <your-staging-url>/metrics  # Prometheus exposition format
+```
+
+### Monitoring on staging — documented limitation
+
+The Prometheus **container stack runs and is verified locally only**
+(`docker compose up` → target `app` is UP at localhost:9090). Render's free
+tier cannot host a second always-on Prometheus container (it would sleep
+too, breaking scraping), so the staging URL exposes the app's `/metrics`
+data directly instead of a Prometheus dashboard. The CI workflow, health
+checks, and metrics endpoint all remain identical between local and staging.
+
+### Alternative path: SSH deployment to a self-managed server
+
+The `deploy-staging` job in `.github/workflows/ci-cd.yml` is a complete
+SSH-based CD job (needs: `publish`, deploys `docker-compose.staging.yml`,
+verifies `/health` afterwards). It stays **gated off** because no VPS
+exists. To enable it later: provision any server with Docker, then set the
+repository secrets/variables listed in that workflow's header comment
+(`STAGING_HOST`, `STAGING_USER`, `STAGING_SSH_KEY`, `STAGING_URL`,
+`DEPLOY_STAGING=true`).
 
 ## Troubleshooting
 
@@ -235,4 +273,6 @@ curl http://localhost:5000/metrics
 ## Submission Links
 
 * **GitHub repository:** https://github.com/Hager-83/devops-pipeline
-* **Live / staging URL:** pending staging server configuration (no URL is claimed until a real deployment has been verified)
+* **Live / staging URL:** `https://<service-name>.onrender.com` — paste the
+  real URL here immediately after the Render setup above; until then this
+  project intentionally claims no live URL

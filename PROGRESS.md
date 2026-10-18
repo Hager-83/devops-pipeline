@@ -229,6 +229,43 @@ First real CI run (`39103434197`) failed at **Verify health endpoint**:
 
 ---
 
+## Phase 5 decision: hosting research → Render (free, no card)
+
+### What changed
+* Research pass comparing all currently free container hosts (Oct 2026):
+  excluded Koyeb ($29 card hold since Feb 2026), Fly.io (no free tier since
+  Oct 2024), Oracle/AWS/GCP/Azure (card required), Heroku (free tier gone).
+  Selected **Render**: card-free signup (GitHub OAuth), 750 free
+  instance-hours/month, and — because no card exists on the account —
+  over-limit usage *suspends* the service instead of ever charging it.
+* `render.yaml` — **created**: Render Blueprint defining a free web service
+  that builds the existing `Dockerfile`, health-checks `/health`, sets
+  `APP_ENV=staging`, and auto-deploys only after repo CI checks pass
+  (`autoDeployTrigger: checksPass`).
+* `README.md` — staging section rewritten: Render setup steps, free-tier
+  facts (15-min sleep / ~60 s cold start / suspension-not-billing), the
+  honest Prometheus-on-staging limitation, SSH job documented as the
+  alternative VPS path; submission-links section updated.
+
+### What you should understand
+* **Charge-proof by construction:** billing requires a payment method.
+  No card → the worst possible outcome is suspension, never a bill.
+* **Why Prometheus stays local:** a second free container would sleep too,
+  so remote scraping would flap. The compose stack proves monitoring locally;
+  staging still exposes `/metrics` directly.
+* **Sleep/cold-start trade-off:** free tiers fund themselves with idle time —
+  a ~60 s first response after idle is normal, not an outage.
+
+### Still pending (requires your account — nothing faked)
+1. You: Render signup → New → Blueprint → connect repo → Apply (~3 min).
+2. You: paste the real `onrender.com` URL into the README submission links.
+3. Verify: `curl <url>/health`, `curl <url>/` (contains `"staging"`),
+   `curl <url>/metrics`.
+
+---
+
+## Current status summary
+
 | Item | Status |
 | ---- | ------ |
 | Dockerfile + Gunicorn | ✅ Restored, built, verified locally |
@@ -238,8 +275,8 @@ First real CI run (`39103434197`) failed at **Verify health endpoint**:
 | Prometheus scraping | ✅ Verified (`up=1`, live metric series) |
 | JSON logging | ✅ Verified |
 | Pytest suite | ✅ 4 tests passing locally |
-| CI workflow (test + docker) | ✅ Written, YAML-validated, steps simulated locally; **first real GitHub run pending push** |
-| GHCR publishing | ✅ Configured; **first real publish pending push** |
-| Staging deployment | ⚠️ Workflow ready and gated; **needs hosting choice + secrets from you** |
+| CI workflow (test → docker → publish) | ✅ Green on GitHub (run `39103889795`); includes the health-check race fix |
+| GHCR publishing | ✅ Published & verified (`ghcr.io/hager-83/devops-pipeline:latest` pulls anonymously) |
+| Staging deployment | ⚠️ Render Blueprint (`render.yaml`) ready; **pending your one-time Render account setup** |
 | README | ✅ Matches implementation |
-| Live URL | ❌ Does not exist yet — will not be claimed until verified |
+| Live URL | ❌ Not claimed — created and verified after the Render setup |

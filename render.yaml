@@ -1,0 +1,22 @@
+# Render Blueprint — staging deployment for devops-pipeline
+# ----------------------------------------------------------
+# Free plan: NO payment method is required or added, so Render
+# cannot bill this workspace. Exceeding free limits suspends the
+# service instead of charging (see README → Staging Deployment).
+#
+# Setup: Render Dashboard → New → Blueprint → connect this repo.
+# Render detects the Dockerfile (EXPOSE 5000) for the listen port.
+services:
+  - type: web
+    name: devops-pipeline-staging
+    runtime: docker
+    plan: free
+    branch: main
+    # Deploy only after the repo's CI checks pass on main
+    autoDeployTrigger: checksPass
+    healthCheckPath: /health
+    envVars:
+      - key: APP_ENV
+        value: staging
+      - key: LOG_LEVEL
+        value: INFO
