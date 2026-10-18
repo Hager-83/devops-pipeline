@@ -194,7 +194,40 @@ No files changed — this phase was pure verification of existing files.
 
 ---
 
-## Current status summary
+## CI incident (post-push): docker job failed on GitHub
+
+### What happened
+First real CI run (`39103434197`) failed at **Verify health endpoint**:
+`curl: (56) Connection reset by peer`.
+
+### Root cause
+* Race condition: curl fired ~390ms after `docker run`, while Gunicorn was
+  still booting (it logged "Listening" 80ms *after* curl already failed).
+* Docker's port proxy accepts the TCP connection even when the container
+  process isn't listening yet → curl saw **exit 56 (reset)**, not exit 7
+  (refused).
+* `--retry-connrefused` only retries exit 7, so there was no retry at all.
+* The image, build, and container were all healthy — only the check was wrong.
+
+### Fix (`.github/workflows/ci-cd.yml`)
+* Replaced `--retry-connrefused` curl flags with an explicit wait loop:
+  15 attempts × 2s (up to 30s), retrying **any** failure until `/health`
+  answers, then fail with a clear message.
+
+### Verified
+* Workflow YAML valid.
+* Failure reproduced locally: attempt 1 → exit 56 (same as CI), attempt 2 →
+  `{"status":"ok"}` — the loop recovers exactly as intended.
+
+### What you should understand
+* Never trust "connection refused" as the only startup failure mode behind
+  Docker port mappings — resets happen too.
+* Retrying specific error codes is brittle; a simple loop that retries until
+  a deadline is easier to reason about and covers everything.
+* CI failures are data: the log timeline (`docker run` → curl → gunicorn's
+  "Listening" line) made the race obvious.
+
+---
 
 | Item | Status |
 | ---- | ------ |
